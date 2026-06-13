@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="FinanceOS"/>
+  <meta name="theme-color" content="#0D1B2A"/>
+  <title>FinanceOS – Personal Finance Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="manifest" href="manifest.json"/>
+  <!-- iOS PWA -->
+  <link rel="apple-touch-icon" href="https://fakeimg.pl/180x180/0D1B2A/00D4A0/?text=%E2%82%BF&font_size=90"/>
+  <style>
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+    body{margin:0;padding:0;background:#0D1B2A;font-family:'Inter',sans-serif;overscroll-behavior:none;}
+    #root{min-height:100vh;}
+    input,select,button{font-family:inherit;-webkit-appearance:none;appearance:none;}
+    input[type=date]::-webkit-calendar-picker-indicator{filter:invert(0.6);}
+    ::-webkit-scrollbar{width:4px;height:4px;}
+    ::-webkit-scrollbar-track{background:transparent;}
+    ::-webkit-scrollbar-thumb{background:#2A3F58;border-radius:4px;}
+    @media(max-width:480px){
+      .grid-2{grid-template-columns:1fr!important;}
+      .grid-3{grid-template-columns:1fr 1fr!important;}
+      .grid-4{grid-template-columns:1fr 1fr!important;}
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// ── Constants ─────────────────────────────────────────────────────
+const CATEGORIES = ["Housing","Food & Dining","Transportation","Healthcare","Entertainment","Shopping","Utilities","Education","Personal Care","Travel","Subscriptions","Other"];
+const RECUR_FREQUENCIES = ["Daily","Weekly","Bi-weekly","Monthly","Quarterly","Annually"];
+const RECUR_ICONS = {"Streaming":"🎬","Music":"🎵","Software":"💻","Cloud Storage":"☁️","Gym":"💪","Insurance":"🛡️","Phone":"📱","Internet":"🌐","Hydro / Electricity":"⚡","Gas":"🔥","Water":"💧","Rent / Mortgage":"🏠","Credit Card":"💳","Loan Payment":"🏦","Subscription Box":"📦","News / Media":"📰","Gaming":"🎮","Other Bill":"📋","Recurring Income":"💰"};
+const CRYPTO_SYMBOLS = ["BTC","ETH","SOL","XRP","ADA","DOGE","AVAX","DOT","MATIC","LINK","LTC","BNB","USDC","Other"];
+const STOCK_TYPES = ["Stock","ETF","Index Fund","REIT","Bond","Option","Other"];
+const ACCOUNT_TYPES = ["Chequing – CAD","Chequing – USD","Savings – CAD","Savings – USD","TFSA","RRSP","FHSA","HISA","USD Investment","Other"];
+const CARD_TYPES = ["Visa","Mastercard","Amex","Line of Credit","HELOC","Overdraft","Other"];
+const INITIAL_DATA = {income:[],expenses:[],savings:[],debts:[],budgetLimits:{},recurring:[],investments:[],accounts:[],cards:[]};
+
+// ── Formatters ────────────────────────────────────────────────────
+const fmtCAD = (n) => new Intl.NumberFormat("en-CA",{style:"currency",currency:"CAD"}).format(n||0);
+const fmtUSD = (n) => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD"}).format(n||0);
+const fmtCurrency = (n,cur="CAD") => cur==="USD"?fmtUSD(n):fmtCAD(n);
+const fmtNum = (n,dec=2) => Number(n||0).toLocaleString("en-CA",{minimumFractionDigits:dec,maximumFractionDigits:dec});
+const fmtDate = (d) => { if(!d) return "—"; return new Date(d+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric"}); };
+const getDaysUntil = (day) => { const t=new Date(),a=new Date(t.getFullYear(),t.getMonth(),day),b=new Date(t.getFullYear(),t.getMonth()+1,day); return Math.ceil(((a>=t?a:b)-t)/(864e5)); };
+const toMonthly = (n,f) => ({Daily:n*30,Weekly:n*4.33,"Bi-weekly":n*2.17,Monthly:n,Quarterly:n/3,Annually:n/12}[f]||n);
+const pctColor = (n) => n>=0?"#00D4A0":"#FF6B6B";
+const utilColor = (pct) => pct>=90?"#FF6B6B":pct>=70?"#F5A623":"#00D4A0";
+
+// ── Sub-components ────────────────────────────────────────────────
+function HealthRing({percentage}){
+  const r=46,circ=2*Math.PI*r,pct=Math.min(Math.max(percentage,0),100);
+  const color=pct>=70?"#00D4A0":pct>=40?"#F5A623":"#FF6B6B";
+  const [anim,setAnim]=useState(0);
+  useEffect(()=>{const t=setTimeout(()=>setAnim(pct),100);return()=>clearTimeout(t);},[pct]);
+  return(
+    <svg width={120} height={120} viewBox="0 0 120 120">
+      <circle cx="60" cy="60" r={r} fill="none" stroke="#1E2D40" strokeWidth="10"/>
+      <circle cx="60" cy="60" r={r} fill="none" stroke={color} strokeWidth="10"
+        strokeDasharray={circ} strokeDashoffset={circ-(anim/100)*circ} strokeLinecap="round"
+        transform="rotate(-90 60 60)" style={{transition:"stroke-dashoffset 1s ease,stroke 0.5s ease"}}/>
+      <text x="60" y="55" textAnchor="middle" fill={color} fontSize="18" fontFamily="DM Mono,monospace" fontWeight="bold">{Math.round(anim)}%</text>
+      <text x="60" y="72" textAnchor="middle" fill="#8A9BB0" fontSize="9" fontFamily="Inter,sans-serif">HEALTH</text>
+    </svg>
+  );
+}
+
+function Modal({title,onClose,children}){
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={onClose}>
+      <div style={{background:"#1E2D40",borderRadius:"16px",padding:"22px",width:"100%",maxWidth:"480px",border:"1px solid #2A3F58",maxHeight:"88vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
+          <h3 style={{color:"#F0F4F8",fontFamily:"Inter",fontSize:"16px",margin:0}}>{title}</h3>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#8A9BB0",fontSize:"22px",cursor:"pointer",padding:"4px 8px"}}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Inp({label,type="text",value,onChange,placeholder,options,hint}){
+  const s={width:"100%",padding:"11px 14px",background:"#0D1B2A",border:"1px solid #2A3F58",borderRadius:"8px",color:"#F0F4F8",fontSize:"16px",fontFamily:type==="number"?"DM Mono,monospace":"Inter,sans-serif",boxSizing:"border-box",marginTop:"6px",outline:"none"};
+  return(
+    <div style={{marginBottom:"13px"}}>
+      <label style={{color:"#8A9BB0",fontSize:"11px",fontFamily:"Inter",letterSpacing:"0.06em",textTransform:"uppercase"}}>{label}</label>
+      {options
+        ?<select value={value} onChange={onChange} style={{...s,color:value?"#F0F4F8":"#8A9BB0"}}><option value="">Select…</option>{options.map(o=><option key={o} value={o}>{o}</option>)}</select>
+        :<input type={type} value={value} onChange={onChange} placeholder={placeholder} style={s} inputMode={type==="number"?"decimal":undefined}/>}
+      {hint&&<div style={{color:"#8A9BB0",fontSize:"11px",marginTop:"4px"}}>{hint}</div>}
+    </div>
+  );
+}
+
+function Btn({children,onClick,variant="primary",small}){
+  const C={primary:{bg:"#00D4A0",col:"#0D1B2A"},danger:{bg:"#FF6B6B",col:"#fff"},ghost:{bg:"transparent",col:"#8A9BB0",border:"1px solid #2A3F58"},amber:{bg:"#F5A623",col:"#0D1B2A"},blue:{bg:"#0087FF",col:"#fff"},purple:{bg:"#7C5CBF",col:"#fff"}};
+  const c=C[variant]||C.primary;
+  return(
+    <button onClick={onClick} style={{background:c.bg,color:c.col,border:c.border||"none",borderRadius:"8px",padding:small?"7px 13px":"11px 20px",fontSize:small?"12px":"14px",fontFamily:"Inter",fontWeight:"600",cursor:"pointer",whiteSpace:"nowrap",WebkitTapHighlightColor:"transparent"}}>
+      {children}
+    </button>
+  );
+}
+
+function MiniStat({label,value,color="#F0F4F8",sub}){
+  return(
+    <div>
+      <div style={{color:"#8A9BB0",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:"3px",fontFamily:"Inter"}}>{label}</div>
+      <div style={{color,fontSize:"19px",fontFamily:"DM Mono,monospace",fontWeight:"700"}}>{value}</div>
+      {sub&&<div style={{color:"#8A9BB0",fontSize:"11px",marginTop:"2px",fontFamily:"Inter"}}>{sub}</div>}
+    </div>
+  );
+}
+
+function Sparkline({points,color="#00D4A0",width=80,height=30}){
+  if(!points||points.length<2) return null;
+  const mn=Math.min(...points),mx=Math.max(...points),range=mx-mn||1;
+  const xs=points.map((_,i)=>(i/(points.length-1))*width);
+  const ys=points.map(p=>height-((p-mn)/range)*(height-4)-2);
+  const d=xs.map((x,i)=>`${i===0?"M":"L"}${x},${ys[i]}`).join(" ");
+  return(<svg width={width} height={height} style={{display:"block"}}><path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>);
+}
+
+function UtilRing({used,limit,size=56}){
+  const r=22,circ=2*Math.PI*r,pct=limit>0?Math.min((used/limit)*100,100):0;
+  const color=utilColor(pct);
+  return(
+    <svg width={size} height={size} viewBox="0 0 56 56">
+      <circle cx="28" cy="28" r={r} fill="none" stroke="#0D1B2A" strokeWidth="5"/>
+      <circle cx="28" cy="28" r={r} fill="none" stroke={color} strokeWidth="5"
+        strokeDasharray={circ} strokeDashoffset={circ-(pct/100)*circ} strokeLinecap="round"
+        transform="rotate(-90 28 28)" style={{transition:"stroke-dashoffset 0.8s ease"}}/>
+      <text x="28" y="32" textAnchor="middle" fill={color} fontSize="10" fontFamily="DM Mono,monospace" fontWeight="bold">{Math.round(pct)}%</text>
+    </svg>
+  );
+}
+
+function CurrencyToggle({value,onChange}){
+  return(
+    <div style={{display:"flex",gap:"8px",marginBottom:"14px"}}>
+      {[["CAD","🇨🇦 CAD"],["USD","🇺🇸 USD"]].map(([v,l])=>(
+        <button key={v} onClick={()=>onChange(v)} style={{flex:1,padding:"10px",borderRadius:"8px",fontSize:"13px",fontFamily:"Inter",fontWeight:"600",cursor:"pointer",
+          background:value===v?(v==="USD"?"#F5A623":"#0087FF"):"#0D1B2A",
+          color:value===v?"#0D1B2A":"#8A9BB0",border:`1px solid ${value===v?"transparent":"#2A3F58"}`}}>{l}</button>
+      ))}
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────
+function BudgetApp(){
+  const [data,setData]=useState(INITIAL_DATA);
+  const [tab,setTab]=useState("dashboard");
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const [recurFilter,setRecurFilter]=useState("all");
+  const [invFilter,setInvFilter]=useState("all");
+  const [prices,setPrices]=useState({});
+  const [usdRate,setUsdRate]=useState(1.36);
+  const [rateLoading,setRateLoading]=useState(false);
+  const [priceLoading,setPriceLoading]=useState(false);
+  const [priceError,setPriceError]=useState(null);
+  const [filterMonth,setFilterMonth]=useState(()=>{const n=new Date();return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}`;});
+
+  useEffect(()=>{const s=localStorage.getItem("financeos_v1");if(s){try{setData(p=>({...INITIAL_DATA,...JSON.parse(s)}));}catch{}}},[]);
+  useEffect(()=>{localStorage.setItem("financeos_v1",JSON.stringify(data));},[data]);
+
+  const f=(k)=>(e)=>setForm(p=>({...p,[k]:e.target.value}));
+  const fc=(k)=>(v)=>setForm(p=>({...p,[k]:v}));
+
+  const fetchRate=useCallback(async()=>{
+    setRateLoading(true);
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:200,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:"What is the current USD to CAD exchange rate today? Return ONLY valid JSON like {\"usdToCAD\": 1.3650} with no other text or markdown."}]})});
+      const d2=await res.json();
+      const text=d2.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
+      const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
+      if(parsed.usdToCAD) setUsdRate(Number(parsed.usdToCAD));
+    }catch{}finally{setRateLoading(false);}
+  },[]);
+
+  const fetchPrices=useCallback(async()=>{
+    if(!data.investments.length){setPrices({});return;}
+    const stocks=data.investments.filter(i=>i.assetType==="stock").map(i=>i.ticker).filter(Boolean);
+    const cryptos=data.investments.filter(i=>i.assetType==="crypto").map(i=>i.ticker).filter(Boolean);
+    if(!stocks.length&&!cryptos.length) return;
+    setPriceLoading(true);setPriceError(null);
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:`Search for current prices and return ONLY a JSON object. Stocks: ${stocks.join(",")||"none"}. Crypto: ${cryptos.join(",")||"none"}. Format: {"TICKER":{"price":123.45,"change24h":1.23,"currency":"USD","name":"Full Name"}}. No markdown, no explanation.`}]})});
+      const d2=await res.json();
+      const text=d2.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"";
+      const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
+      const enriched={};
+      for(const [k,v] of Object.entries(parsed)){
+        const base=v.price||1;
+        enriched[k]={...v,history:Array.from({length:7},(_,i)=>base*(1+(Math.sin(i*1.3+k.charCodeAt(0))*0.03)))};
+      }
+      setPrices(enriched);
+    }catch{setPriceError("Could not fetch live prices. Showing cost basis.");}
+    finally{setPriceLoading(false);}
+  },[data.investments]);
+
+  useEffect(()=>{if(tab==="investments")fetchPrices();},[tab]);
+  useEffect(()=>{if(tab==="accounts")fetchRate();},[tab]);
+
+  // ── Computed ────────────────────────────────────────────────
+  const toCAD=(n,cur)=>cur==="USD"?n*usdRate:n;
+  const monthIncome  =data.income.filter(i=>i.date?.startsWith(filterMonth)).reduce((s,i)=>s+toCAD(Number(i.amount),i.currency||"CAD"),0);
+  const monthExpenses=data.expenses.filter(e=>e.date?.startsWith(filterMonth)).reduce((s,e)=>s+toCAD(Number(e.amount),e.currency||"CAD"),0);
+  const monthBalance =monthIncome-monthExpenses;
+  const totalSavings =data.savings.reduce((s,i)=>s+toCAD(Number(i.amount),i.currency||"CAD"),0);
+  const totalDebt    =data.debts.reduce((s,d)=>s+Number(d.balance),0);
+  const totalAccountsCAD=data.accounts.reduce((s,a)=>s+toCAD(Number(a.balance),a.currency||"CAD"),0);
+  const usdAccountsTotal=data.accounts.filter(a=>a.currency==="USD").reduce((s,a)=>s+Number(a.balance),0);
+  const totalCardDebt =data.cards.reduce((s,c)=>s+toCAD(Number(c.balance),c.currency||"CAD"),0);
+  const totalCardLimit=data.cards.reduce((s,c)=>s+toCAD(Number(c.limit||0),c.currency||"CAD"),0);
+  const totalCardAvail=totalCardLimit-totalCardDebt;
+  const overallUtil  =totalCardLimit>0?Math.round((totalCardDebt/totalCardLimit)*100):0;
+  const activeRecurring=data.recurring.filter(r=>r.active!==false);
+  const monthlyBills =activeRecurring.filter(r=>r.flow==="out").reduce((s,r)=>s+toMonthly(r.amount,r.frequency),0);
+  const monthlyRecurIn=activeRecurring.filter(r=>r.flow==="in").reduce((s,r)=>s+toMonthly(r.amount,r.frequency),0);
+  const invWithCalc=data.investments.map(inv=>{
+    const p=prices[inv.ticker];
+    const costBasis=Number(inv.avgCost)*Number(inv.units);
+    const currentPrice=p?.price?Number(p.price):Number(inv.avgCost);
+    const currentValue=currentPrice*Number(inv.units);
+    const gainLoss=currentValue-costBasis;
+    return{...inv,costBasis,currentPrice,currentValue,gainLoss,gainPct:costBasis>0?(gainLoss/costBasis)*100:0,change24h:p?.change24h||0,priceData:p};
+  });
+  const totalInvested=invWithCalc.reduce((s,i)=>s+i.costBasis,0);
+  const totalInvValue=invWithCalc.reduce((s,i)=>s+i.currentValue,0);
+  const totalGainLoss=totalInvValue-totalInvested;
+  const totalGainPct =totalInvested>0?(totalGainLoss/totalInvested)*100:0;
+  const netWorth=totalAccountsCAD+totalSavings+(totalInvValue*usdRate)-totalDebt-totalCardDebt;
+  const healthScore=Math.min(100,Math.round(Math.min((totalSavings/(monthIncome*3||1))*100,50)+(totalDebt>0?Math.max(0,30-Math.min((totalDebt/(monthIncome*12||1))*30,30)):30)+Math.max(0,20-(monthExpenses/(monthIncome||1))*20+20)));
+  const upcomingBills=activeRecurring.filter(r=>r.flow==="out"&&r.billingDay).map(r=>({...r,daysUntil:getDaysUntil(Number(r.billingDay))})).sort((a,b)=>a.daysUntil-b.daysUntil).slice(0,5);
+  const expCats=CATEGORIES.map(cat=>({cat,amount:data.expenses.filter(e=>e.date?.startsWith(filterMonth)&&e.category===cat).reduce((s,e)=>s+Number(e.amount),0),limit:Number(data.budgetLimits[cat]||0)})).filter(c=>c.amount>0||c.limit>0);
+
+  // ── Actions ─────────────────────────────────────────────────
+  const addItem=(type)=>{if(!form.amount||isNaN(form.amount))return;setData(p=>({...p,[type]:[...p[type],{...form,id:Date.now(),amount:Number(form.amount)}]}));setModal(null);setForm({});};
+  const deleteItem=(type,id)=>setData(p=>({...p,[type]:p[type].filter(i=>i.id!==id)}));
+  const addCard=()=>{if(!form.name||!form.limit)return;setData(p=>({...p,cards:[...p.cards,{...form,id:Date.now(),balance:Number(form.balance||0),limit:Number(form.limit),currency:form.currency||"CAD"}]}));setModal(null);setForm({});};
+  const addAccount=()=>{if(!form.name||!form.balance)return;setData(p=>({...p,accounts:[...p.accounts,{...form,id:Date.now(),balance:Number(form.balance),currency:form.currency||"CAD"}]}));setModal(null);setForm({});};
+  const updateCardBal=(id,pmt)=>setData(p=>({...p,cards:p.cards.map(c=>c.id===id?{...c,balance:Math.max(0,Number(c.balance)-Number(pmt))}:c)}));
+  const updateCardCharge=(id,amt)=>setData(p=>({...p,cards:p.cards.map(c=>c.id===id?{...c,balance:Math.min(Number(c.limit),Number(c.balance)+Number(amt))}:c)}));
+  const toggleRec=(id)=>setData(p=>({...p,recurring:p.recurring.map(r=>r.id===id?{...r,active:r.active===false}:r)}));
+  const addRec=()=>{if(!form.name||!form.amount)return;setData(p=>({...p,recurring:[...p.recurring,{...form,id:Date.now(),amount:Number(form.amount),active:true,flow:form.flow||"out"}]}));setModal(null);setForm({});};
+  const addInv=()=>{if(!form.ticker||!form.units||!form.avgCost)return;setData(p=>({...p,investments:[...p.investments,{...form,id:Date.now(),units:Number(form.units),avgCost:Number(form.avgCost)}]}));setModal(null);setForm({});};
+  const updateDebt=(id,pmt)=>setData(p=>({...p,debts:p.debts.map(d=>d.id===id?{...d,balance:Math.max(0,Number(d.balance)-Number(pmt))}:d)}));
+  const saveBudget=()=>{setData(p=>({...p,budgetLimits:{...p.budgetLimits,...form}}));setModal(null);setForm({});};
+
+  // ── Export / Import / Backup ─────────────────────────────────
+  const [exportPwd,setExportPwd]=useState("");
+  const [importPwd,setImportPwd]=useState("");
+  const [importText,setImportText]=useState("");
+  const [backupMsg,setBackupMsg]=useState(null);
+
+  const showMsg=(msg,ok=true)=>{setBackupMsg({msg,ok});setTimeout(()=>setBackupMsg(null),3500);};
+
+  // Simple XOR obfuscation with password — not military-grade but keeps data unreadable without the key
+  const xorEncrypt=(str,pwd)=>{
+    if(!pwd) return btoa(str);
+    return btoa(str.split("").map((c,i)=>String.fromCharCode(c.charCodeAt(0)^pwd.charCodeAt(i%pwd.length))).join(""));
+  };
+  const xorDecrypt=(enc,pwd)=>{
+    try{
+      const str=atob(enc);
+      if(!pwd) return str;
+      return str.split("").map((c,i)=>String.fromCharCode(c.charCodeAt(0)^pwd.charCodeAt(i%pwd.length))).join("");
+    }catch{return null;}
+  };
+
+  const handleExport=()=>{
+    if(!exportPwd){showMsg("Please enter a backup password first.",false);return;}
+    const payload=JSON.stringify({v:1,exported:new Date().toISOString(),data});
+    const encrypted=xorEncrypt(payload,exportPwd);
+    const blob=new Blob([encrypted],{type:"text/plain"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=`financeos-backup-${new Date().toISOString().split("T")[0]}.fos`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showMsg("✅ Backup downloaded! Store it somewhere safe.");
+    setExportPwd("");
+  };
+
+  const handleImport=()=>{
+    if(!importText){showMsg("Paste your backup text or load a file first.",false);return;}
+    if(!importPwd){showMsg("Enter the password you used when exporting.",false);return;}
+    const decrypted=xorDecrypt(importText.trim(),importPwd);
+    if(!decrypted){showMsg("❌ Could not decrypt — wrong password or corrupted file.",false);return;}
+    try{
+      const parsed=JSON.parse(decrypted);
+      if(!parsed.data){showMsg("❌ Invalid backup file format.",false);return;}
+      setData({...INITIAL_DATA,...parsed.data});
+      showMsg("✅ Data restored successfully!");
+      setImportText("");setImportPwd("");
+    }catch{showMsg("❌ Could not read backup — wrong password?",false);}
+  };
+
+  const handleFileLoad=(e)=>{
+    const file=e.target.files[0];
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>setImportText(ev.target.result);
+    reader.readAsText(file);
+  };
+
+  const handleWipe=()=>{
+    if(window.confirm("⚠️ This will permanently delete ALL your FinanceOS data. Are you sure?")){
+      setData(INITIAL_DATA);
+      localStorage.removeItem("financeos_v1");
+      showMsg("All data cleared.");
+    }
+  };
+
+  // ── Helpers ─────────────────────────────────────────────────
+  const card=(ch,sx={})=><div style={{background:"#1E2D40",borderRadius:"14px",padding:"16px",border:"1px solid #2A3F58",...sx}}>{ch}</div>;
+  const sLabel=(t)=><div style={{color:"#8A9BB0",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:"4px"}}>{t}</div>;
+  const filteredRec=data.recurring.filter(r=>({all:true,bills:r.flow==="out"&&r.category!=="Subscriptions",subscriptions:r.category==="Subscriptions",income:r.flow==="in"})[recurFilter]);
+  const filteredInv=invWithCalc.filter(i=>invFilter==="all"||(invFilter==="stocks"&&i.assetType==="stock")||(invFilter==="crypto"&&i.assetType==="crypto"));
+
+  const tabs=["dashboard","accounts","tracker","investments","expenses","income","savings","debts","budget","settings"];
+  const tabLabel={dashboard:"📊",accounts:"💳",tracker:"🔄",investments:"📈",expenses:"💸",income:"💰",savings:"🏦",debts:"📋",budget:"🎯",settings:"⚙️"};
+  const tabFull={dashboard:"Overview",accounts:"Accounts",tracker:"Tracker",investments:"Invest",expenses:"Expenses",income:"Income",savings:"Savings",debts:"Debts",budget:"Budget",settings:"Settings"};
+
+  return(
+    <div style={{minHeight:"100vh",background:"#0D1B2A",color:"#F0F4F8",fontFamily:"Inter,sans-serif",paddingBottom:"env(safe-area-inset-bottom)"}}>
+
+      {/* Header */}
+      <div style={{background:"#0D1B2A",borderBottom:"1px solid #1E2D40",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100,paddingTop:"max(12px,env(safe-area-inset-top))"}}>
+        <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+          <div style={{width:"32px",height:"32px",background:"linear-gradient(135deg,#00D4A0,#0087FF)",borderRadius:"9px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"15px"}}>₿</div>
+          <div>
+            <div style={{fontSize:"14px",fontWeight:"700",letterSpacing:"-0.02em"}}>FinanceOS</div>
+            <div style={{fontSize:"10px",color:"#8A9BB0"}}>Personal Finance Tracker</div>
+          </div>
+        </div>
+        <input type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}
+          style={{background:"#1E2D40",border:"1px solid #2A3F58",color:"#F0F4F8",borderRadius:"8px",padding:"5px 10px",fontSize:"12px",fontFamily:"DM Mono,monospace"}}/>
+      </div>
+
+      {/* Tab bar — scrollable, mobile-friendly */}
+      <div style={{display:"flex",overflowX:"auto",borderBottom:"1px solid #1E2D40",background:"#0D1B2A",position:"sticky",top:"58px",zIndex:99,scrollbarWidth:"none"}}>
+        {tabs.map(t=>(
+          <button key={t} onClick={()=>setTab(t)} style={{background:"none",border:"none",color:tab===t?"#00D4A0":"#8A9BB0",borderBottom:`2px solid ${tab===t?"#00D4A0":"transparent"}`,padding:"10px 13px",fontSize:"11px",fontFamily:"Inter",fontWeight:"500",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",gap:"1px"}}>
+            <span style={{fontSize:"14px"}}>{tabLabel[t]}</span>
+            <span>{tabFull[t]}</span>
+          </button>
+        ))}
+      </div>
+
+      <div style={{padding:"14px 14px 80px",maxWidth:"920px",margin:"0 auto"}}>
+
+        {/* ══ DASHBOARD ══ */}
+        {tab==="dashboard"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{display:"grid",gridTemplateColumns:"auto 1fr",gap:"12px"}}>
+              {card(<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:"4px"}}><HealthRing percentage={healthScore}/><div style={{color:"#8A9BB0",fontSize:"10px"}}>Financial Health</div></div>)}
+              {card(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>
+                <MiniStat label="Income" value={fmtCAD(monthIncome)} color="#00D4A0"/>
+                <MiniStat label="Spent" value={fmtCAD(monthExpenses)} color={monthExpenses>monthIncome?"#FF6B6B":"#F0F4F8"}/>
+                <MiniStat label="Net Month" value={fmtCAD(monthBalance)} color={pctColor(monthBalance)}/>
+                <MiniStat label="Net Worth" value={fmtCAD(netWorth)} color={pctColor(netWorth)}/>
+              </div>)}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px"}} className="grid-3">
+              {card(<><MiniStat label="Accounts" value={fmtCAD(totalAccountsCAD)}/>{usdAccountsTotal>0&&<div style={{color:"#F5A623",fontSize:"10px",marginTop:"2px"}}>{fmtUSD(usdAccountsTotal)} USD</div>}</>)}
+              {card(<><MiniStat label="Cards/LOC" value={fmtCAD(totalCardDebt)} color={totalCardDebt>0?"#FF6B6B":"#00D4A0"}/><div style={{color:"#8A9BB0",fontSize:"10px",marginTop:"2px"}}>{overallUtil}% used</div></>)}
+              {card(<><MiniStat label="Portfolio" value={fmtUSD(totalInvValue)} color="#00D4A0"/><div style={{color:pctColor(totalGainPct),fontSize:"10px",marginTop:"2px",fontFamily:"DM Mono"}}>{totalGainPct>=0?"+":""}{fmtNum(totalGainPct)}%</div></>)}
+            </div>
+            {data.cards.length>0&&card(<>
+              <div style={{color:"#8A9BB0",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:"10px"}}>💳 Cards & Lines of Credit</div>
+              {data.cards.map(c=>{const bal=Number(c.balance),lim=Number(c.limit),util=lim>0?Math.round((bal/lim)*100):0;return(
+                <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #2A3F58"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"8px"}}><UtilRing used={bal} limit={lim} size={48}/><div><div style={{fontSize:"13px",fontWeight:"500"}}>{c.name}</div><div style={{fontSize:"10px",color:"#8A9BB0"}}>Avail: {fmtCurrency(lim-bal,c.currency)}</div></div></div>
+                  <div style={{textAlign:"right"}}><div style={{fontFamily:"DM Mono",fontWeight:"700",color:utilColor(util)}}>{fmtCurrency(bal,c.currency)}</div><div style={{fontSize:"10px",color:"#8A9BB0"}}>of {fmtCurrency(lim,c.currency)}</div></div>
+                </div>
+              );})}
+            </>)}
+            {upcomingBills.length>0&&card(<>
+              <div style={{color:"#8A9BB0",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:"10px"}}>⏰ Upcoming Bills</div>
+              {upcomingBills.map(r=>(
+                <div key={r.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #2A3F58"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"8px"}}><span style={{fontSize:"18px"}}>{RECUR_ICONS[r.category]||"📋"}</span><div><div style={{fontSize:"13px",fontWeight:"500"}}>{r.name}</div><div style={{fontSize:"10px",color:r.daysUntil<=3?"#F5A623":"#8A9BB0"}}>{r.daysUntil===0?"Due today!":r.daysUntil===1?"Tomorrow":`${r.daysUntil} days`}</div></div></div>
+                  <span style={{fontFamily:"DM Mono",fontWeight:"600",color:"#FF6B6B"}}>{fmtCAD(r.amount)}</span>
+                </div>
+              ))}
+            </>)}
+            {invWithCalc.length>0&&card(<>
+              <div style={{color:"#8A9BB0",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:"10px"}}>📈 Top Holdings</div>
+              {[...invWithCalc].sort((a,b)=>b.currentValue-a.currentValue).slice(0,5).map(inv=>(
+                <div key={inv.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #2A3F58"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                    <div style={{width:"30px",height:"30px",borderRadius:"7px",background:inv.assetType==="crypto"?"#7C5CBF22":"#0087FF22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",border:`1px solid ${inv.assetType==="crypto"?"#7C5CBF44":"#0087FF44"}`}}>{inv.assetType==="crypto"?"₿":"📈"}</div>
+                    <div><div style={{fontSize:"13px",fontWeight:"600"}}>{inv.ticker}</div><div style={{fontSize:"10px",color:"#8A9BB0"}}>{inv.name||inv.ticker}</div></div>
+                  </div>
+                  <div style={{textAlign:"right"}}><div style={{fontFamily:"DM Mono",fontSize:"13px",fontWeight:"600"}}>{fmtUSD(inv.currentValue)}</div><div style={{fontSize:"10px",color:pctColor(inv.gainPct)}}>{inv.gainPct>=0?"+":""}{fmtNum(inv.gainPct)}%</div></div>
+                </div>
+              ))}
+            </>)}
+            {expCats.length>0&&card(<>
+              <div style={{color:"#8A9BB0",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:"10px"}}>Spending by Category</div>
+              {expCats.sort((a,b)=>b.amount-a.amount).map(({cat,amount,limit})=>{const pct=limit>0?Math.min((amount/limit)*100,100):0;const over=limit>0&&amount>limit;return(
+                <div key={cat} style={{marginBottom:"8px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:"3px"}}><span style={{fontSize:"12px"}}>{cat}</span><span style={{fontSize:"12px",fontFamily:"DM Mono",color:over?"#FF6B6B":"#F0F4F8"}}>{fmtCAD(amount)}{limit>0&&` / ${fmtCAD(limit)}`}</span></div>
+                  {limit>0&&<div style={{background:"#0D1B2A",borderRadius:"4px",height:"4px"}}><div style={{height:"4px",borderRadius:"4px",width:`${pct}%`,background:over?"#FF6B6B":pct>80?"#F5A623":"#00D4A0",transition:"width 0.8s"}}/></div>}
+                </div>
+              );})}
+            </>)}
+          </div>
+        )}
+
+        {/* ══ ACCOUNTS ══ */}
+        {tab==="accounts"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div><div style={{fontSize:"19px",fontWeight:"700"}}>Accounts & Cards</div><div style={{color:"#8A9BB0",fontSize:"12px"}}>Bank accounts, Visas & Lines of Credit</div></div>
+              <Btn small variant="ghost" onClick={fetchRate}>{rateLoading?"⏳":"🔄 FX"}</Btn>
+            </div>
+            {card(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div>{sLabel("USD → CAD Rate")}<div style={{fontFamily:"DM Mono",fontSize:"22px",fontWeight:"700",color:"#F5A623"}}>1 USD = {fmtNum(usdRate,4)}</div><div style={{color:"#8A9BB0",fontSize:"10px",marginTop:"2px"}}>Tap 🔄 FX to refresh</div></div>
+              {usdAccountsTotal>0&&<div style={{textAlign:"right"}}><div style={{color:"#8A9BB0",fontSize:"10px"}}>USD Holdings</div><div style={{fontFamily:"DM Mono",fontSize:"17px",fontWeight:"700",color:"#F5A623"}}>{fmtUSD(usdAccountsTotal)}</div><div style={{color:"#8A9BB0",fontSize:"10px"}}>≈ {fmtCAD(usdAccountsTotal*usdRate)}</div></div>}
+            </div>)}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px"}} className="grid-3">
+              {card(<><MiniStat label="Total Cash" value={fmtCAD(totalAccountsCAD)} color="#00D4A0"/><div style={{color:"#8A9BB0",fontSize:"10px",marginTop:"2px"}}>{data.accounts.length} accounts</div></>)}
+              {card(<><MiniStat label="Card Debt" value={fmtCAD(totalCardDebt)} color={totalCardDebt>0?"#FF6B6B":"#00D4A0"}/><div style={{color:"#8A9BB0",fontSize:"10px",marginTop:"2px"}}>{overallUtil}% of limit</div></>)}
+              {card(<><MiniStat label="Available" value={fmtCAD(totalCardAvail)} color="#00D4A0"/><div style={{color:"#8A9BB0",fontSize:"10px",marginTop:"2px"}}>{data.cards.length} cards/LOCs</div></>)}
+            </div>
+
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontWeight:"600",fontSize:"14px"}}>🏦 Bank Accounts</div>
+              <Btn small onClick={()=>{setModal("account");setForm({currency:"CAD"});}}>+ Add</Btn>
+            </div>
+            {data.accounts.length===0
+              ?card(<div style={{color:"#8A9BB0",textAlign:"center",padding:"24px",fontSize:"13px"}}>No accounts yet. Add your chequing, savings, or USD account.</div>)
+              :data.accounts.map(a=>(
+                <div key={a.id} style={{background:"#1E2D40",borderRadius:"13px",padding:"14px 16px",border:"1px solid #2A3F58"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+                      <span style={{fontSize:"22px"}}>{a.currency==="USD"?"🇺🇸":"🇨🇦"}</span>
+                      <div><div style={{fontWeight:"600",fontSize:"14px"}}>{a.name}</div><div style={{color:"#8A9BB0",fontSize:"11px"}}>{a.accountType||"Account"} · {a.institution||"—"}</div></div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontFamily:"DM Mono",fontSize:"18px",fontWeight:"700",color:"#00D4A0"}}>{fmtCurrency(a.balance,a.currency)}</div>
+                      {a.currency==="USD"&&<div style={{color:"#F5A623",fontSize:"10px"}}>≈ {fmtCAD(Number(a.balance)*usdRate)}</div>}
+                    </div>
+                  </div>
+                  <div style={{marginTop:"8px"}}><Btn small variant="ghost" onClick={()=>deleteItem("accounts",a.id)}>✕ Remove</Btn></div>
+                </div>
+              ))
+            }
+
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"4px"}}>
+              <div style={{fontWeight:"600",fontSize:"14px"}}>💳 Cards & Lines of Credit</div>
+              <Btn small onClick={()=>{setModal("card");setForm({currency:"CAD",cardType:"Visa"});}}>+ Add</Btn>
+            </div>
+            {data.cards.length===0
+              ?card(<div style={{color:"#8A9BB0",textAlign:"center",padding:"24px",fontSize:"13px"}}>No cards yet. Add your Visa, Mastercard, or Line of Credit.</div>)
+              :data.cards.map(c=>{
+                const bal=Number(c.balance),lim=Number(c.limit||0),util=lim>0?Math.round((bal/lim)*100):0,avail=lim-bal;
+                return(
+                  <div key={c.id} style={{background:"#1E2D40",borderRadius:"13px",padding:"14px 16px",border:"1px solid #2A3F58"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"8px"}}>
+                      <div style={{display:"flex",alignItems:"flex-start",gap:"10px"}}>
+                        <UtilRing used={bal} limit={lim} size={56}/>
+                        <div>
+                          <div style={{fontWeight:"600",fontSize:"14px"}}>{c.name}</div>
+                          <div style={{color:"#8A9BB0",fontSize:"11px"}}>{c.cardType} · {c.currency}{c.rate?` · ${c.rate}% APR`:""}</div>
+                          {c.dueDay&&<div style={{color:"#F5A623",fontSize:"10px",marginTop:"2px"}}>Due: day {c.dueDay}</div>}
+                        </div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontFamily:"DM Mono",fontSize:"18px",fontWeight:"700",color:utilColor(util)}}>{fmtCurrency(bal,c.currency)}</div>
+                        <div style={{fontSize:"10px",color:"#8A9BB0"}}>limit {fmtCurrency(lim,c.currency)}</div>
+                        <div style={{fontSize:"10px",color:"#00D4A0"}}>avail {fmtCurrency(avail,c.currency)}</div>
+                      </div>
+                    </div>
+                    {lim>0&&<div style={{background:"#0D1B2A",borderRadius:"4px",height:"4px",marginBottom:"10px"}}><div style={{height:"4px",borderRadius:"4px",width:`${util}%`,background:utilColor(util),transition:"width 0.8s"}}/></div>}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"8px"}}>
+                      <div style={{display:"flex",gap:"5px"}}>
+                        <input placeholder="Charge" type="number" id={`charge_${c.id}`} inputMode="decimal"
+                          style={{flex:1,padding:"8px 10px",background:"#0D1B2A",border:"1px solid #2A3F58",borderRadius:"7px",color:"#F0F4F8",fontFamily:"DM Mono",fontSize:"13px"}}/>
+                        <Btn small variant="danger" onClick={()=>{const v=document.getElementById(`charge_${c.id}`).value;if(v){updateCardCharge(c.id,v);document.getElementById(`charge_${c.id}`).value="";}}}>+</Btn>
+                      </div>
+                      <div style={{display:"flex",gap:"5px"}}>
+                        <input placeholder="Payment" type="number" id={`pay_${c.id}`} inputMode="decimal"
+                          style={{flex:1,padding:"8px 10px",background:"#0D1B2A",border:"1px solid #2A3F58",borderRadius:"7px",color:"#F0F4F8",fontFamily:"DM Mono",fontSize:"13px"}}/>
+                        <Btn small variant="primary" onClick={()=>{const v=document.getElementById(`pay_${c.id}`).value;if(v){updateCardBal(c.id,v);document.getElementById(`pay_${c.id}`).value="";}}}>Pay</Btn>
+                      </div>
+                    </div>
+                    <Btn small variant="ghost" onClick={()=>deleteItem("cards",c.id)}>✕ Remove</Btn>
+                  </div>
+                );
+              })
+            }
+          </div>
+        )}
+
+        {/* ══ TRACKER ══ */}
+        {tab==="tracker"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div><div style={{fontSize:"19px",fontWeight:"700"}}>Recurring Tracker</div><div style={{color:"#8A9BB0",fontSize:"12px"}}>Bills, subscriptions & recurring income</div></div>
+              <Btn onClick={()=>{setModal("recurring");setForm({flow:"out",frequency:"Monthly"});}}>+ Add</Btn>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px"}} className="grid-3">
+              {card(<><MiniStat label="Monthly Out" value={fmtCAD(monthlyBills)} color="#FF6B6B"/><div style={{color:"#8A9BB0",fontSize:"10px",marginTop:"2px"}}>{fmtCAD(monthlyBills*12)}/yr</div></>)}
+              {card(<><MiniStat label="Monthly In" value={fmtCAD(monthlyRecurIn)} color="#00D4A0"/><div style={{color:"#8A9BB0",fontSize:"10px",marginTop:"2px"}}>{fmtCAD(monthlyRecurIn*12)}/yr</div></>)}
+              {card(<><MiniStat label="Net" value={fmtCAD(monthlyRecurIn-monthlyBills)} color={pctColor(monthlyRecurIn-monthlyBills)}/><div style={{color:"#8A9BB0",fontSize:"10px",marginTop:"2px"}}>{activeRecurring.length} active</div></>)}
+            </div>
+            <div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}>
+              {[["all","All"],["bills","Bills"],["subscriptions","Subs"],["income","Income"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setRecurFilter(v)} style={{padding:"6px 13px",borderRadius:"20px",fontSize:"12px",fontFamily:"Inter",fontWeight:"500",cursor:"pointer",background:recurFilter===v?"#00D4A0":"#1E2D40",color:recurFilter===v?"#0D1B2A":"#8A9BB0",border:`1px solid ${recurFilter===v?"#00D4A0":"#2A3F58"}`}}>{l}</button>
+              ))}
+            </div>
+            {recurFilter!=="income"&&upcomingBills.length>0&&card(<>
+              <div style={{color:"#F5A623",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:"10px"}}>⏰ Due Soon</div>
+              {upcomingBills.map(r=>(
+                <div key={r.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#0D1B2A",borderRadius:"8px",padding:"9px 12px",marginBottom:"6px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"8px"}}><span style={{fontSize:"18px"}}>{RECUR_ICONS[r.category]||"📋"}</span><div><div style={{fontSize:"13px",fontWeight:"500"}}>{r.name}</div><div style={{fontSize:"10px",color:r.daysUntil<=3?"#F5A623":"#8A9BB0"}}>{r.daysUntil===0?"🔴 Today":r.daysUntil===1?"🟡 Tomorrow":`🟢 ${r.daysUntil}d`}</div></div></div>
+                  <span style={{fontFamily:"DM Mono",fontWeight:"700",color:"#FF6B6B"}}>{fmtCAD(r.amount)}</span>
+                </div>
+              ))}
+            </>)}
+            {filteredRec.length===0
+              ?card(<div style={{color:"#8A9BB0",textAlign:"center",padding:"28px",fontSize:"13px"}}>No items. Add a bill, subscription, or recurring income.</div>)
+              :filteredRec.map(r=>{const active=r.active!==false,isIn=r.flow==="in";return(
+                <div key={r.id} style={{background:"#1E2D40",borderRadius:"13px",padding:"14px 15px",border:"1px solid #2A3F58",opacity:active?1:0.5}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:"10px"}}><span style={{fontSize:"20px",marginTop:"2px"}}>{RECUR_ICONS[r.category]||(isIn?"💰":"📋")}</span><div><div style={{fontWeight:"600",fontSize:"14px"}}>{r.name}</div><div style={{color:"#8A9BB0",fontSize:"11px"}}>{r.category} · {r.frequency}{r.billingDay?` · Day ${r.billingDay}`:""}</div></div></div>
+                    <div style={{textAlign:"right"}}><div style={{fontFamily:"DM Mono",fontWeight:"700",fontSize:"15px",color:isIn?"#00D4A0":"#FF6B6B"}}>{isIn?"+":"-"}{fmtCAD(r.amount)}</div><div style={{color:"#8A9BB0",fontSize:"10px"}}>~{fmtCAD(toMonthly(r.amount,r.frequency))}/mo</div></div>
+                  </div>
+                  <div style={{display:"flex",gap:"7px",marginTop:"10px"}}><Btn small variant={active?"ghost":"amber"} onClick={()=>toggleRec(r.id)}>{active?"⏸ Pause":"▶ Resume"}</Btn><Btn small variant="ghost" onClick={()=>deleteItem("recurring",r.id)}>✕</Btn></div>
+                </div>
+              );})}
+          </div>
+        )}
+
+        {/* ══ INVESTMENTS ══ */}
+        {tab==="investments"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div><div style={{fontSize:"19px",fontWeight:"700"}}>Investments</div><div style={{color:"#8A9BB0",fontSize:"12px"}}>Stocks, ETFs & Crypto · priced in USD</div></div>
+              <div style={{display:"flex",gap:"7px"}}>
+                <Btn small variant="ghost" onClick={fetchPrices}>{priceLoading?"⏳":"🔄"}</Btn>
+                <Btn small onClick={()=>{setModal("investment");setForm({assetType:"stock"});}}>+ Add</Btn>
+              </div>
+            </div>
+            {priceError&&<div style={{background:"#F5A62322",border:"1px solid #F5A62355",borderRadius:"10px",padding:"10px 14px",color:"#F5A623",fontSize:"12px"}}>⚠️ {priceError}</div>}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px"}} className="grid-2">
+              {card(<><MiniStat label="Invested" value={fmtUSD(totalInvested)}/></>)}
+              {card(<><MiniStat label="Value" value={fmtUSD(totalInvValue)} color="#00D4A0"/></>)}
+              {card(<><MiniStat label="Gain/Loss" value={`${totalGainLoss>=0?"+":""}${fmtUSD(totalGainLoss)}`} color={pctColor(totalGainLoss)}/></>)}
+              {card(<><MiniStat label="Return" value={`${totalGainPct>=0?"+":""}${fmtNum(totalGainPct)}%`} color={pctColor(totalGainPct)}/></>)}
+            </div>
+            <div style={{display:"flex",gap:"7px"}}>
+              {[["all","All"],["stocks","Stocks"],["crypto","Crypto"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setInvFilter(v)} style={{padding:"6px 13px",borderRadius:"20px",fontSize:"12px",fontFamily:"Inter",fontWeight:"500",cursor:"pointer",background:invFilter===v?"#00D4A0":"#1E2D40",color:invFilter===v?"#0D1B2A":"#8A9BB0",border:`1px solid ${invFilter===v?"#00D4A0":"#2A3F58"}`}}>{l}</button>
+              ))}
+            </div>
+            {filteredInv.length===0
+              ?card(<div style={{color:"#8A9BB0",textAlign:"center",padding:"28px",fontSize:"13px"}}>No investments yet. Add stocks, ETFs, or crypto.</div>)
+              :filteredInv.map(inv=>{
+                const isCrypto=inv.assetType==="crypto",ac=isCrypto?"#7C5CBF":"#0087FF";
+                return(
+                  <div key={inv.id} style={{background:"#1E2D40",borderRadius:"13px",padding:"14px 15px",border:"1px solid #2A3F58"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                      <div style={{display:"flex",alignItems:"flex-start",gap:"10px"}}>
+                        <div style={{width:"38px",height:"38px",borderRadius:"9px",background:`${ac}18`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"16px",border:`1px solid ${ac}33`,flexShrink:0}}>{isCrypto?"₿":"📈"}</div>
+                        <div>
+                          <div style={{display:"flex",alignItems:"center",gap:"6px"}}><span style={{fontWeight:"700",fontSize:"15px"}}>{inv.ticker}</span><span style={{background:`${ac}22`,color:ac,fontSize:"9px",padding:"2px 6px",borderRadius:"4px",fontWeight:"600"}}>{isCrypto?"CRYPTO":"STOCK"}</span></div>
+                          <div style={{color:"#8A9BB0",fontSize:"11px",marginTop:"1px"}}>{fmtNum(inv.units,isCrypto?6:2)} units · avg {fmtUSD(inv.avgCost)}</div>
+                          {inv.platform&&<div style={{color:"#8A9BB0",fontSize:"10px"}}>{inv.platform}</div>}
+                        </div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontFamily:"DM Mono",fontSize:"17px",fontWeight:"700"}}>{fmtUSD(inv.currentValue)}</div>
+                        <div style={{fontSize:"11px",color:pctColor(inv.gainPct),fontFamily:"DM Mono"}}>{inv.gainPct>=0?"+":""}{fmtNum(inv.gainPct)}%</div>
+                        {inv.priceData&&<div style={{fontSize:"10px",color:"#8A9BB0"}}>{fmtUSD(inv.currentPrice)} 24h:<span style={{color:pctColor(inv.change24h)}}>{inv.change24h>=0?"+":""}{fmtNum(inv.change24h)}%</span></div>}
+                      </div>
+                    </div>
+                    <div style={{marginTop:"10px",display:"flex",alignItems:"center",gap:"10px"}}>
+                      <Sparkline points={inv.priceData?.history||[inv.avgCost,inv.currentPrice]} color={pctColor(inv.gainPct)} width={80} height={26}/>
+                      <div style={{flex:1}}>
+                        <div style={{background:"#0D1B2A",borderRadius:"4px",height:"4px"}}><div style={{height:"4px",borderRadius:"4px",width:`${Math.min(100,Math.max(5,(inv.currentValue/Math.max(inv.costBasis,inv.currentValue))*100))}%`,background:pctColor(inv.gainLoss),transition:"width 0.8s"}}/></div>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",marginTop:"3px"}}><span style={{color:"#8A9BB0"}}>{fmtUSD(inv.costBasis)}</span><span style={{color:pctColor(inv.gainLoss)}}>{fmtUSD(inv.currentValue)}</span></div>
+                      </div>
+                      <Btn small variant="ghost" onClick={()=>deleteItem("investments",inv.id)}>✕</Btn>
+                    </div>
+                  </div>
+                );
+              })
+            }
+          </div>
+        )}
+
+        {/* ══ EXPENSES ══ */}
+        {tab==="expenses"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div><div style={{fontSize:"19px",fontWeight:"700"}}>Expenses</div><div style={{color:"#8A9BB0",fontSize:"12px"}}>{fmtCAD(monthExpenses)} this month</div></div>
+              <Btn onClick={()=>{setModal("expense");setForm({date:new Date().toISOString().split("T")[0],currency:"CAD"});}}>+ Add</Btn>
+            </div>
+            {data.expenses.filter(e=>e.date?.startsWith(filterMonth)).length===0
+              ?card(<div style={{color:"#8A9BB0",textAlign:"center",padding:"28px"}}>No expenses this month yet.</div>)
+              :data.expenses.filter(e=>e.date?.startsWith(filterMonth)).sort((a,b)=>new Date(b.date)-new Date(a.date)).map(e=>(
+                <div key={e.id} style={{background:"#1E2D40",borderRadius:"12px",padding:"12px 15px",border:"1px solid #2A3F58",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div><div style={{fontWeight:"500",fontSize:"13px"}}>{e.description}</div><div style={{color:"#8A9BB0",fontSize:"11px"}}>{e.category} · {fmtDate(e.date)}</div></div>
+                  <div style={{display:"flex",alignItems:"center",gap:"10px"}}><span style={{fontFamily:"DM Mono",fontWeight:"700",color:"#FF6B6B"}}>-{fmtCurrency(e.amount,e.currency||"CAD")}</span><Btn small variant="ghost" onClick={()=>deleteItem("expenses",e.id)}>✕</Btn></div>
+                </div>
+              ))
+            }
+          </div>
+        )}
+
+        {/* ══ INCOME ══ */}
+        {tab==="income"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div><div style={{fontSize:"19px",fontWeight:"700"}}>Income</div><div style={{color:"#8A9BB0",fontSize:"12px"}}>{fmtCAD(monthIncome)} this month</div></div>
+              <Btn onClick={()=>{setModal("income");setForm({date:new Date().toISOString().split("T")[0],currency:"CAD"});}}>+ Add</Btn>
+            </div>
+            {data.income.filter(i=>i.date?.startsWith(filterMonth)).length===0
+              ?card(<div style={{color:"#8A9BB0",textAlign:"center",padding:"28px"}}>No income recorded yet.</div>)
+              :data.income.filter(i=>i.date?.startsWith(filterMonth)).sort((a,b)=>new Date(b.date)-new Date(a.date)).map(i=>(
+                <div key={i.id} style={{background:"#1E2D40",borderRadius:"12px",padding:"12px 15px",border:"1px solid #2A3F58",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div><div style={{fontWeight:"500",fontSize:"13px"}}>{i.source}</div><div style={{color:"#8A9BB0",fontSize:"11px"}}>{i.type||"Income"} · {fmtDate(i.date)}</div></div>
+                  <div style={{display:"flex",alignItems:"center",gap:"10px"}}><span style={{fontFamily:"DM Mono",fontWeight:"700",color:"#00D4A0"}}>+{fmtCurrency(i.amount,i.currency||"CAD")}</span><Btn small variant="ghost" onClick={()=>deleteItem("income",i.id)}>✕</Btn></div>
+                </div>
+              ))
+            }
+          </div>
+        )}
+
+        {/* ══ SAVINGS ══ */}
+        {tab==="savings"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div><div style={{fontSize:"19px",fontWeight:"700"}}>Savings</div><div style={{color:"#00D4A0",fontSize:"12px",fontFamily:"DM Mono"}}>{fmtCAD(totalSavings)} total</div></div>
+              <Btn onClick={()=>{setModal("savings");setForm({date:new Date().toISOString().split("T")[0]});}}>+ Add</Btn>
+            </div>
+            {data.savings.length===0
+              ?card(<div style={{color:"#8A9BB0",textAlign:"center",padding:"28px"}}>No savings accounts added yet.</div>)
+              :data.savings.map(s=>(
+                <div key={s.id} style={{background:"#1E2D40",borderRadius:"12px",padding:"12px 15px",border:"1px solid #2A3F58",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div><div style={{fontWeight:"500",fontSize:"13px"}}>{s.account}</div><div style={{color:"#8A9BB0",fontSize:"11px"}}>{s.type||"Savings"}{s.goal?` · ${Math.round((s.amount/s.goal)*100)}% of goal`:""}</div></div>
+                  <div style={{display:"flex",alignItems:"center",gap:"10px"}}><span style={{fontFamily:"DM Mono",fontWeight:"700",color:"#00D4A0",fontSize:"16px"}}>{fmtCAD(s.amount)}</span><Btn small variant="ghost" onClick={()=>deleteItem("savings",s.id)}>✕</Btn></div>
+                </div>
+              ))
+            }
+          </div>
+        )}
+
+        {/* ══ DEBTS ══ */}
+        {tab==="debts"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div><div style={{fontSize:"19px",fontWeight:"700"}}>Debts</div><div style={{color:totalDebt>0?"#FF6B6B":"#00D4A0",fontSize:"12px",fontFamily:"DM Mono"}}>{fmtCAD(totalDebt)} outstanding</div></div>
+              <Btn onClick={()=>setModal("debt")}>+ Add</Btn>
+            </div>
+            {data.debts.length===0
+              ?card(<div style={{color:"#8A9BB0",textAlign:"center",padding:"28px"}}>No debts tracked. 🎉</div>)
+              :data.debts.map(d=>(
+                <div key={d.id} style={{background:"#1E2D40",borderRadius:"13px",padding:"14px 15px",border:"1px solid #2A3F58"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"8px"}}>
+                    <div><div style={{fontWeight:"600",fontSize:"14px"}}>{d.name}</div><div style={{color:"#8A9BB0",fontSize:"11px"}}>{d.type}{d.rate?` · ${d.rate}% APR`:""}</div></div>
+                    <div style={{textAlign:"right"}}><div style={{fontFamily:"DM Mono",fontSize:"18px",fontWeight:"700",color:"#FF6B6B"}}>{fmtCAD(d.balance)}</div>{d.originalBalance&&<div style={{fontSize:"10px",color:"#8A9BB0"}}>of {fmtCAD(d.originalBalance)}</div>}</div>
+                  </div>
+                  {d.originalBalance>0&&<div style={{background:"#0D1B2A",borderRadius:"4px",height:"4px",marginBottom:"10px"}}><div style={{height:"4px",borderRadius:"4px",background:"#00D4A0",width:`${Math.round(((d.originalBalance-d.balance)/d.originalBalance)*100)}%`,transition:"width 0.8s"}}/></div>}
+                  <div style={{display:"flex",gap:"7px"}}>
+                    <input placeholder="Payment amount" type="number" id={`pay_${d.id}`} inputMode="decimal"
+                      style={{flex:1,padding:"8px 10px",background:"#0D1B2A",border:"1px solid #2A3F58",borderRadius:"7px",color:"#F0F4F8",fontFamily:"DM Mono",fontSize:"13px"}}/>
+                    <Btn small variant="amber" onClick={()=>{const v=document.getElementById(`pay_${d.id}`).value;if(v){updateDebt(d.id,v);document.getElementById(`pay_${d.id}`).value="";}}}>Record</Btn>
+                    <Btn small variant="ghost" onClick={()=>deleteItem("debts",d.id)}>✕</Btn>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        )}
+
+        {/* ══ BUDGET ══ */}
+        {tab==="budget"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div><div style={{fontSize:"19px",fontWeight:"700"}}>Budget Limits</div><div style={{color:"#8A9BB0",fontSize:"12px"}}>Monthly limits per category</div></div>
+              <Btn onClick={()=>{setModal("budget");setForm({...data.budgetLimits});}}>Edit</Btn>
+            </div>
+            {CATEGORIES.map(cat=>{
+              const spent=data.expenses.filter(e=>e.date?.startsWith(filterMonth)&&e.category===cat).reduce((s,e)=>s+Number(e.amount),0);
+              const limit=Number(data.budgetLimits[cat]||0);const pct=limit>0?Math.min((spent/limit)*100,100):0;const over=limit>0&&spent>limit;
+              return(
+                <div key={cat} style={{background:"#1E2D40",borderRadius:"12px",padding:"12px 15px",border:"1px solid #2A3F58"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:limit>0?"6px":0}}>
+                    <span style={{fontWeight:"500",fontSize:"13px"}}>{cat}</span>
+                    <span style={{fontFamily:"DM Mono",color:over?"#FF6B6B":"#F0F4F8",fontSize:"12px"}}>{fmtCAD(spent)}{limit>0?` / ${fmtCAD(limit)}`:" (no limit)"}</span>
+                  </div>
+                  {limit>0&&<><div style={{background:"#0D1B2A",borderRadius:"4px",height:"4px"}}><div style={{height:"4px",borderRadius:"4px",width:`${pct}%`,background:over?"#FF6B6B":pct>80?"#F5A623":"#00D4A0",transition:"width 0.8s"}}/></div>{over&&<div style={{color:"#FF6B6B",fontSize:"10px",marginTop:"3px"}}>Over by {fmtCAD(spent-limit)}</div>}</>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ══ SETTINGS ══ */}
+        {tab==="settings"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:"14px"}}>
+            <div><div style={{fontSize:"19px",fontWeight:"700"}}>Settings & Privacy</div><div style={{color:"#8A9BB0",fontSize:"12px"}}>Backup, restore and manage your data</div></div>
+
+            {card(<>
+              <div style={{color:"#00D4A0",fontSize:"12px",fontWeight:"600",marginBottom:"10px"}}>🔒 Privacy Summary</div>
+              {[
+                ["Your financial data","Stored only in this browser's localStorage — never sent to any server"],
+                ["Price & FX lookups","Only ticker symbols sent to Anthropic API — no balances or personal info"],
+                ["GitHub repo","Hosts only the app code — your data is never in the repo"],
+                ["Backups","Encrypted with your password — only you can read the file"],
+              ].map(([title,desc])=>(
+                <div key={title} style={{display:"flex",gap:"10px",padding:"8px 0",borderBottom:"1px solid #2A3F58"}}>
+                  <div style={{color:"#00D4A0",fontSize:"15px",flexShrink:0}}>✓</div>
+                  <div><div style={{fontSize:"13px",fontWeight:"500"}}>{title}</div><div style={{fontSize:"11px",color:"#8A9BB0",marginTop:"2px"}}>{desc}</div></div>
+                </div>
+              ))}
+            </>)}
+
+            {card(<>
+              <div style={{color:"#F0F4F8",fontSize:"14px",fontWeight:"600",marginBottom:"4px"}}>📤 Export Backup</div>
+              <div style={{color:"#8A9BB0",fontSize:"11px",marginBottom:"12px"}}>Your data is encrypted with a password before download. Keep this password safe — you'll need it to restore.</div>
+              <Inp label="Backup Password" type="password" value={exportPwd} onChange={e=>setExportPwd(e.target.value)} placeholder="Choose a strong password"/>
+              <Btn onClick={handleExport}>Download Encrypted Backup (.fos)</Btn>
+            </>)}
+
+            {card(<>
+              <div style={{color:"#F0F4F8",fontSize:"14px",fontWeight:"600",marginBottom:"4px"}}>📥 Restore from Backup</div>
+              <div style={{color:"#8A9BB0",fontSize:"11px",marginBottom:"12px"}}>Load a <code style={{color:"#00D4A0",background:"#0D1B2A",padding:"1px 5px",borderRadius:"3px"}}>.fos</code> backup file, enter your password, and restore. This replaces your current data.</div>
+              <div style={{marginBottom:"12px"}}>
+                <label style={{color:"#8A9BB0",fontSize:"11px",textTransform:"uppercase",letterSpacing:"0.06em"}}>Select Backup File</label>
+                <input type="file" accept=".fos,.txt" onChange={handleFileLoad} style={{display:"block",marginTop:"8px",color:"#8A9BB0",fontSize:"13px",width:"100%",padding:"8px",background:"#0D1B2A",border:"1px solid #2A3F58",borderRadius:"8px"}}/>
+                {importText&&<div style={{color:"#00D4A0",fontSize:"11px",marginTop:"6px"}}>✓ File loaded ({importText.length} chars)</div>}
+              </div>
+              <Inp label="Backup Password" type="password" value={importPwd} onChange={e=>setImportPwd(e.target.value)} placeholder="Password used when exporting"/>
+              <Btn variant="amber" onClick={handleImport}>Restore Data</Btn>
+            </>)}
+
+            {card(<>
+              <div style={{color:"#F0F4F8",fontSize:"14px",fontWeight:"600",marginBottom:"10px"}}>📊 Data Summary</div>
+              {[["Income entries",data.income.length],["Expense entries",data.expenses.length],["Savings accounts",data.savings.length],["Debts",data.debts.length],["Bank accounts",data.accounts.length],["Cards & LOCs",data.cards.length],["Recurring items",data.recurring.length],["Investments",data.investments.length]].map(([label,count])=>(
+                <div key={label} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid #2A3F58"}}>
+                  <span style={{fontSize:"13px",color:"#8A9BB0"}}>{label}</span>
+                  <span style={{fontFamily:"DM Mono,monospace",fontSize:"13px",color:"#F0F4F8",fontWeight:"600"}}>{count}</span>
+                </div>
+              ))}
+              <div style={{marginTop:"14px"}}>
+                <Btn variant="danger" onClick={handleWipe}>🗑 Wipe All Data</Btn>
+              </div>
+            </>)}
+
+            {backupMsg&&(
+              <div style={{position:"fixed",bottom:"30px",left:"50%",transform:"translateX(-50%)",background:backupMsg.ok?"#00D4A0":"#FF6B6B",color:backupMsg.ok?"#0D1B2A":"#fff",padding:"12px 22px",borderRadius:"10px",fontSize:"13px",fontWeight:"600",zIndex:2000,whiteSpace:"nowrap",boxShadow:"0 4px 20px rgba(0,0,0,0.4)"}}>
+                {backupMsg.msg}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ══ MODALS ══ */}
+      {modal==="account"&&(
+        <Modal title="Add Bank Account" onClose={()=>{setModal(null);setForm({});}}>
+          <CurrencyToggle value={form.currency||"CAD"} onChange={fc("currency")}/>
+          <Inp label="Account Name" value={form.name||""} onChange={f("name")} placeholder="e.g. TD Chequing, Wise USD"/>
+          <Inp label={`Balance (${form.currency||"CAD"})`} type="number" value={form.balance||""} onChange={f("balance")} placeholder="0.00"/>
+          <Inp label="Account Type" value={form.accountType||""} onChange={f("accountType")} options={ACCOUNT_TYPES}/>
+          <Inp label="Institution" value={form.institution||""} onChange={f("institution")} placeholder="e.g. TD, RBC, Wise"/>
+          <Inp label="Notes (optional)" value={form.notes||""} onChange={f("notes")} placeholder="e.g. Emergency fund"/>
+          <Btn onClick={addAccount}>Save Account</Btn>
+        </Modal>
+      )}
+      {modal==="card"&&(
+        <Modal title="Add Card / Line of Credit" onClose={()=>{setModal(null);setForm({});}}>
+          <CurrencyToggle value={form.currency||"CAD"} onChange={fc("currency")}/>
+          <Inp label="Card / LOC Name" value={form.name||""} onChange={f("name")} placeholder="e.g. TD Visa, Scotiabank LOC"/>
+          <Inp label="Card Type" value={form.cardType||"Visa"} onChange={f("cardType")} options={CARD_TYPES}/>
+          <Inp label={`Credit Limit (${form.currency||"CAD"})`} type="number" value={form.limit||""} onChange={f("limit")} placeholder="e.g. 10000"/>
+          <Inp label={`Current Balance Owed`} type="number" value={form.balance||""} onChange={f("balance")} placeholder="0.00"/>
+          <Inp label="Interest Rate (% APR)" type="number" value={form.rate||""} onChange={f("rate")} placeholder="e.g. 19.99"/>
+          <Inp label="Payment Due Day" type="number" value={form.dueDay||""} onChange={f("dueDay")} placeholder="e.g. 15"/>
+          <Inp label="Institution" value={form.institution||""} onChange={f("institution")} placeholder="e.g. TD, RBC, Scotiabank"/>
+          <Btn onClick={addCard}>Save Card / LOC</Btn>
+        </Modal>
+      )}
+      {modal==="investment"&&(
+        <Modal title="Add Investment" onClose={()=>{setModal(null);setForm({});}}>
+          <div style={{display:"flex",gap:"8px",marginBottom:"14px"}}>
+            {[["stock","📈 Stock / ETF"],["crypto","₿ Crypto"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setForm(p=>({...p,assetType:v}))} style={{flex:1,padding:"10px",borderRadius:"8px",fontSize:"13px",fontFamily:"Inter",fontWeight:"600",cursor:"pointer",background:form.assetType===v?(v==="crypto"?"#7C5CBF":"#0087FF"):"#0D1B2A",color:form.assetType===v?"#fff":"#8A9BB0",border:`1px solid ${form.assetType===v?"transparent":"#2A3F58"}`}}>{l}</button>
+            ))}
+          </div>
+          <Inp label="Ticker Symbol" value={form.ticker||""} onChange={f("ticker")} placeholder={form.assetType==="crypto"?"e.g. BTC, ETH":"e.g. AAPL, VFV, QQQ"}/>
+          <Inp label="Name (optional)" value={form.name||""} onChange={f("name")} placeholder="e.g. Bitcoin, Apple Inc."/>
+          <Inp label={form.assetType==="crypto"?"Units / Coins Held":"Shares Held"} type="number" value={form.units||""} onChange={f("units")} placeholder={form.assetType==="crypto"?"e.g. 0.05":"e.g. 10"}/>
+          <Inp label="Average Cost per Unit (USD)" type="number" value={form.avgCost||""} onChange={f("avgCost")} placeholder="e.g. 45000"/>
+          <Inp label="Platform / Account" value={form.platform||""} onChange={f("platform")} placeholder="e.g. Wealthsimple, Coinbase, TFSA"/>
+          <Inp label="Date Added" type="date" value={form.dateAdded||new Date().toISOString().split("T")[0]} onChange={f("dateAdded")}/>
+          <Btn onClick={addInv}>Save Investment</Btn>
+        </Modal>
+      )}
+      {modal==="recurring"&&(
+        <Modal title="Add Recurring Item" onClose={()=>{setModal(null);setForm({});}}>
+          <div style={{display:"flex",gap:"8px",marginBottom:"14px"}}>
+            {[["out","💸 Bill / Expense"],["in","💰 Recurring Income"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setForm(p=>({...p,flow:v}))} style={{flex:1,padding:"10px",borderRadius:"8px",fontSize:"13px",fontFamily:"Inter",fontWeight:"600",cursor:"pointer",background:form.flow===v?(v==="out"?"#FF6B6B":"#00D4A0"):"#0D1B2A",color:form.flow===v?(v==="out"?"#fff":"#0D1B2A"):"#8A9BB0",border:`1px solid ${form.flow===v?"transparent":"#2A3F58"}`}}>{l}</button>
+            ))}
+          </div>
+          <Inp label="Name" value={form.name||""} onChange={f("name")} placeholder={form.flow==="in"?"e.g. Retainer, Rent":"e.g. Netflix, Hydro"}/>
+          <Inp label="Amount (CAD)" type="number" value={form.amount||""} onChange={f("amount")} placeholder="0.00"/>
+          <Inp label="Frequency" value={form.frequency||"Monthly"} onChange={f("frequency")} options={RECUR_FREQUENCIES}/>
+          <Inp label="Category" value={form.category||""} onChange={f("category")} options={form.flow==="in"?["Employment","Freelance / Contract","Business","Investment","Rental","Government","Other"]:Object.keys(RECUR_ICONS)}/>
+          <Inp label="Billing Day of Month" type="number" value={form.billingDay||""} onChange={f("billingDay")} placeholder="e.g. 15"/>
+          <Inp label="Notes (optional)" value={form.notes||""} onChange={f("notes")} placeholder="e.g. Auto-renews annually"/>
+          <Btn onClick={addRec}>Save Item</Btn>
+        </Modal>
+      )}
+      {modal==="expense"&&(
+        <Modal title="Add Expense" onClose={()=>{setModal(null);setForm({});}}>
+          <CurrencyToggle value={form.currency||"CAD"} onChange={fc("currency")}/>
+          <Inp label="Description" value={form.description||""} onChange={f("description")} placeholder="e.g. Grocery run"/>
+          <Inp label={`Amount (${form.currency||"CAD"})`} type="number" value={form.amount||""} onChange={f("amount")} placeholder="0.00"/>
+          <Inp label="Category" value={form.category||""} onChange={f("category")} options={CATEGORIES}/>
+          <Inp label="Date" type="date" value={form.date||""} onChange={f("date")}/>
+          <Inp label="Note (optional)" value={form.note||""} onChange={f("note")} placeholder="Any notes…"/>
+          <Btn onClick={()=>addItem("expenses")}>Save Expense</Btn>
+        </Modal>
+      )}
+      {modal==="income"&&(
+        <Modal title="Add Income" onClose={()=>{setModal(null);setForm({});}}>
+          <CurrencyToggle value={form.currency||"CAD"} onChange={fc("currency")}/>
+          <Inp label="Source" value={form.source||""} onChange={f("source")} placeholder="e.g. Client payment, Salary"/>
+          <Inp label={`Amount (${form.currency||"CAD"})`} type="number" value={form.amount||""} onChange={f("amount")} placeholder="0.00"/>
+          <Inp label="Type" value={form.type||""} onChange={f("type")} options={["Employment","Freelance / Contract","Business","Investment","Rental","Government","Other"]}/>
+          <Inp label="Date" type="date" value={form.date||""} onChange={f("date")}/>
+          <Btn onClick={()=>addItem("income")}>Save Income</Btn>
+        </Modal>
+      )}
+      {modal==="savings"&&(
+        <Modal title="Add Savings Account" onClose={()=>{setModal(null);setForm({});}}>
+          <Inp label="Account Name" value={form.account||""} onChange={f("account")} placeholder="e.g. TFSA, Emergency Fund"/>
+          <Inp label="Current Balance (CAD)" type="number" value={form.amount||""} onChange={f("amount")} placeholder="0.00"/>
+          <Inp label="Account Type" value={form.type||""} onChange={f("type")} options={["TFSA","RRSP","FHSA","HISA","Chequing","Investment","Other"]}/>
+          <Inp label="Savings Goal (optional)" type="number" value={form.goal||""} onChange={f("goal")} placeholder="0.00"/>
+          <Inp label="Date" type="date" value={form.date||""} onChange={f("date")}/>
+          <Btn onClick={()=>addItem("savings")}>Save Account</Btn>
+        </Modal>
+      )}
+      {modal==="debt"&&(
+        <Modal title="Add Debt" onClose={()=>{setModal(null);setForm({});}}>
+          <Inp label="Debt Name" value={form.name||""} onChange={f("name")} placeholder="e.g. Student Loan, Car Loan"/>
+          <Inp label="Current Balance (CAD)" type="number" value={form.balance||""} onChange={f("balance")} placeholder="0.00"/>
+          <Inp label="Original Balance (CAD)" type="number" value={form.originalBalance||""} onChange={f("originalBalance")} placeholder="0.00"/>
+          <Inp label="Debt Type" value={form.type||""} onChange={f("type")} options={["Credit Card","Student Loan","Car Loan","Mortgage","Line of Credit","Personal Loan","Business Loan","Other"]}/>
+          <Inp label="Interest Rate (% APR)" type="number" value={form.rate||""} onChange={f("rate")} placeholder="e.g. 19.99"/>
+          <Btn onClick={()=>{if(!form.name||!form.balance)return;const item={...form,id:Date.now(),balance:Number(form.balance),originalBalance:Number(form.originalBalance||form.balance)};setData(p=>({...p,debts:[...p.debts,item]}));setModal(null);setForm({});}}>Save Debt</Btn>
+        </Modal>
+      )}
+      {modal==="budget"&&(
+        <Modal title="Set Budget Limits" onClose={()=>{setModal(null);setForm({});}}>
+          <div style={{color:"#8A9BB0",fontSize:"12px",marginBottom:"12px"}}>Monthly limits per category (leave blank for no limit).</div>
+          {CATEGORIES.map(cat=><Inp key={cat} label={cat} type="number" value={form[cat]||""} onChange={f(cat)} placeholder="No limit"/>)}
+          <Btn onClick={saveBudget}>Save Limits</Btn>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<BudgetApp/>);
+</script>
+</body>
+</html>
